@@ -10,6 +10,7 @@ import {
   OutputChannel,
   window,
   TaskGroup,
+  TaskDefinition,
 } from "vscode";
 import {
   SwiftPMTaskDefinition,
@@ -18,9 +19,8 @@ import {
   SwiftPMTarget,
 } from "./interfaces";
 
-
 export class SwiftPMTaskProvider implements TaskProvider {
-  static taskType: string = "swift-package";
+  static taskType: string = "swift";
   private swiftpmPromise: Thenable<Task[]> | undefined = undefined;
 
   private _channel?: OutputChannel;
@@ -93,21 +93,44 @@ export class SwiftPMTaskProvider implements TaskProvider {
       if (stdout) {
         let packageDescription: SwiftPackageDescription = JSON.parse(stdout);
 
-        result.push(this.getBuildTask([]));
+        packageDescription.targets.forEach((target) => {
+          switch (target.type) {
+            case TargetType.Executable:
+              let kind: TaskDefinition = {
+                type: SwiftPMTaskProvider.taskType,
+                args: [], //["debug", "release"]
+              };
+              let task = new Task(
+                kind,
+                `run ${target.name}`,
+                "swift",
+                new ShellExecution(`swift run ${target.name}`)
+              );
+              task.group = TaskGroup.Build;
+              task.isBackground = false;
+              result.push(task);
+              break;
 
-        for (let target of packageDescription.targets) {
-          if (target.type === TargetType.Executable) {
-            result.push(this.getExecutableTask(target));
+            case TargetType.Library:
+              break;
+            case TargetType.Test:
+              break;
           }
+        });
+
+        if (packageDescription.targets.map(item => item.type).includes(TargetType.Library)) {
+          result.push(this.task('build'));
         }
 
-        if (
-          packageDescription.targets.filter(
-            (target) => target.type === TargetType.Test
-          ).length !== 0
-        ) {
-          result.push(this.getTestTask());
+        if (packageDescription.targets.map(item => item.type).includes(TargetType.Test)) {
+          result.push(this.task('test'));
         }
+
+        if (packageDescription.targets.map(item => item.type).includes(TargetType.Test)) {
+          result.push(this.task('clean'));
+        }
+
+
       }
       return result;
     } catch (err) {
@@ -124,63 +147,15 @@ export class SwiftPMTaskProvider implements TaskProvider {
     }
   }
 
-  getTestTask(): Task {
-    let kind: SwiftPMTaskDefinition = {
+  private task(type: string) {
+    let kind: TaskDefinition = {
       type: SwiftPMTaskProvider.taskType,
-      task: "test",
       args: [],
     };
-
-    let taskName = `test`;
-    let task = new Task(
-      kind,
-      taskName,
-      "swift-package",
-      new ShellExecution(`swift ${kind.task}`)
-    );
-    task.group = TaskGroup.Test;
-    task.isBackground = false;
-    return task;
-  }
-
-  getExecutableTask(target: SwiftPMTarget): Task {
-    let kind: SwiftPMTaskDefinition = {
-      type: SwiftPMTaskProvider.taskType,
-      task: "run",
-      args: [],
-    };
-
-    let taskName = `run ${target.name}`;
-    let task = new Task(
-      kind,
-      taskName,
-      "swift-package",
-      new ShellExecution(`swift ${kind.task}`)
-    );
-    // task.group = vscode.TaskGroup.Build;
-    task.isBackground = false;
-    return task;
-  }
-
-  getBuildTask(args: string[]): Task {
-    let kind: SwiftPMTaskDefinition = {
-      type: SwiftPMTaskProvider.taskType,
-      task: "build",
-      args: args, //["debug", "release"]
-    };
-
-    var taskName = "build";
-    let task = new Task(
-      kind,
-      taskName,
-      "swift-package",
-
-      // TODO: Build Arguments
-      new ShellExecution(`swift ${kind.task}`)
-    );
+    let task = new Task(kind, `run ${type}`, "swift", new ShellExecution(`swift run ${type}`));
     task.group = TaskGroup.Build;
     task.isBackground = false;
-    return task;
+    return task
   }
 
   exists(file: string): Promise<boolean> {
